@@ -1,0 +1,14 @@
+.env
+.env.local
+.next/
+node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.pyc
+*.sqlite3
+dist/
+uploads/
+

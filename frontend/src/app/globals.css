@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+* { border-color: rgb(255 255 255 / .1); }
+body { margin: 0; color: #f7f7fb; background: #090b14; font-family: Arial, Helvetica, sans-serif; }
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(circle at 12% 15%, rgb(128 87 255 / .22), transparent 34%),
+    radial-gradient(circle at 88% 82%, rgb(77 226 221 / .14), transparent 30%); }
+input { color-scheme: dark; }
+@layer components {
+  .glass { @apply border border-white/10 bg-white/[.055] shadow-2xl backdrop-blur-xl; }
+  .focus-ring { @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan focus-visible:ring-offset-2 focus-visible:ring-offset-ink; }
+}
+
