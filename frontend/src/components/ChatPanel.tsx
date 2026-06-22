@@ -78,49 +78,88 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     }
   };
 
-  // Helper to parse Pandas JSON dataframe string to table
-  const renderOutputTable = (outputStr?: string) => {
+  const parseJsonOutput = (outputStr?: string) => {
     if (!outputStr) return null;
     try {
-      const parsed = JSON.parse(outputStr);
-      if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object") {
-        const columns = Object.keys(parsed[0]);
-        return (
-          <div className="overflow-x-auto border border-white/5 rounded-lg mt-3 max-h-60 bg-black/40">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-white/10 bg-white/5">
+      return JSON.parse(outputStr);
+    } catch {
+      return outputStr;
+    }
+  };
+
+  const renderOutput = (outputStr?: string) => {
+    if (!outputStr) return null;
+    const parsed = parseJsonOutput(outputStr);
+
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object") {
+      const columns = Object.keys(parsed[0]);
+      return (
+        <div className="overflow-x-auto border border-white/10 rounded-2xl mt-4 max-h-72 bg-slate-950/70">
+          <div className="px-4 py-3 border-b border-white/10 text-[11px] uppercase tracking-[0.2em] text-slate-500 bg-slate-900/80">
+            Result preview
+          </div>
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-white/10 bg-slate-950/80">
+                {columns.map((col) => (
+                  <th key={col} className="p-2 font-semibold text-slate-300">
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {parsed.slice(0, 10).map((row, idx) => (
+                <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition">
                   {columns.map((col) => (
-                    <th key={col} className="p-2 font-bold text-slate-300">
-                      {col}
-                    </th>
+                    <td key={col} className="p-2 text-slate-300 font-mono align-top">
+                      {row[col] !== null && row[col] !== undefined ? String(row[col]) : "-"}
+                    </td>
                   ))}
                 </tr>
-              </thead>
-              <tbody>
-                {parsed.slice(0, 10).map((row, idx) => (
-                  <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition">
-                    {columns.map((col) => (
-                      <td key={col} className="p-2 text-slate-400 font-mono">
-                        {row[col] !== null ? String(row[col]) : "-"}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {parsed.length > 10 && (
-              <div className="p-2 text-center text-[10px] text-slate-500 bg-white/5 border-t border-white/5">
-                Showing top 10 of {parsed.length} rows
-              </div>
-            )}
-          </div>
-        );
-      }
-      return <pre className="text-xs font-mono text-slate-400 mt-2 whitespace-pre-wrap">{outputStr}</pre>;
-    } catch {
-      return <pre className="text-xs font-mono text-slate-400 mt-2 whitespace-pre-wrap">{outputStr}</pre>;
+              ))}
+            </tbody>
+          </table>
+          {parsed.length > 10 && (
+            <div className="px-4 py-2 text-[11px] text-slate-400 bg-slate-900/80 border-t border-white/10">
+              Showing top 10 of {parsed.length} rows
+            </div>
+          )}
+        </div>
+      );
     }
+
+    if (Array.isArray(parsed)) {
+      return (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-[12px] text-slate-300">
+          <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-slate-500">Result list</div>
+          <ul className="list-disc list-inside space-y-1">
+            {parsed.slice(0, 20).map((value, idx) => (
+              <li key={idx} className="font-mono text-slate-300">{typeof value === "object" ? JSON.stringify(value) : String(value)}</li>
+            ))}
+          </ul>
+          {parsed.length > 20 && <div className="mt-2 text-[11px] text-slate-500">Showing top 20 of {parsed.length} items</div>}
+        </div>
+      );
+    }
+
+    if (parsed && typeof parsed === "object") {
+      return (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-[12px] text-slate-300">
+          <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-slate-500">Result summary</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {Object.entries(parsed).map(([key, value]) => (
+              <div key={key} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{key}</div>
+                <div className="mt-1 text-sm font-mono text-slate-200 break-words">{typeof value === "object" ? JSON.stringify(value) : String(value)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    return <pre className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-[12px] font-mono text-slate-300 whitespace-pre-wrap">{String(parsed)}</pre>;
   };
 
   return (
@@ -129,7 +168,10 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
       <div className="px-6 py-4 border-b border-white/5 bg-black/20 flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <MessageSquare className="h-5 w-5 text-accent-indigo" />
-          <h3 className="text-sm font-bold text-white">Chat with Dataset</h3>
+          <div>
+            <h3 className="text-sm font-bold text-white">Data Chat Assistant</h3>
+            <p className="text-[11px] text-slate-400">Ask insightful questions about your dataset and get fast analytical answers.</p>
+          </div>
         </div>
         <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full border border-emerald-500/20 bg-emerald-500/5 text-[10px] text-emerald-400">
           <Terminal className="h-3 w-3" />
@@ -160,11 +202,11 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
               }`}
             >
               <div
-                className={`p-4 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                className={`p-4 rounded-3xl text-sm leading-relaxed shadow-[0_20px_60px_-40px_rgba(0,0,0,0.6)] ${
                   msg.role === "user"
-                    ? "bg-accent-indigo text-white rounded-br-none"
-                    : "glass-card text-slate-200 rounded-bl-none border-white/5"
-                }`}
+                    ? "bg-gradient-to-r from-accent-indigo to-accent-purple text-white rounded-br-none"
+                    : "bg-white/5 text-slate-200 rounded-bl-none border border-white/10"
+                } break-words`}
               >
                 <div className="whitespace-pre-wrap">{msg.content}</div>
                 
@@ -186,7 +228,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
                 {/* Custom Output rendering (Table / String) */}
                 {msg.code_output && (
                   <div className="mt-2">
-                    {renderOutputTable(msg.code_output)}
+                    {renderOutput(msg.code_output)}
                   </div>
                 )}
               </div>

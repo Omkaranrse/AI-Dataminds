@@ -25,4 +25,5 @@ venv/
 
 # Build
 dist/
-build/git status
+build/git statusbackend/dev.db
+uploads/

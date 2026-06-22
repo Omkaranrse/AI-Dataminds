@@ -1,6 +1,9 @@
 import os
+import re
+import json
+import math
 import pandas as pd
-from typing import List
+from typing import List, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from app.db.session import get_session
@@ -19,46 +22,112 @@ except ImportError:
 
 router = APIRouter()
 
+def find_column_by_keywords(columns: list[str], keywords: list[str]) -> str | None:
+    lower = [c.lower() for c in columns]
+    for keyword in keywords:
+        for index, col in enumerate(lower):
+            if keyword in col:
+                return columns[index]
+    return None
+
+
+def normalize_json_value(value: Any) -> Any:
+    if isinstance(value, float):
+        if math.isnan(value) or not math.isfinite(value):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {k: normalize_json_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_json_value(v) for v in value]
+    return value
+
+
+def safe_json_dumps(value: Any) -> str:
+    normalized = normalize_json_value(value)
+    return json.dumps(normalized, default=str)
+
+
+def summarize_result(result: Any, query: str) -> str:
+    if isinstance(result, pd.DataFrame):
+        rows = len(result)
+        cols = len(result.columns)
+        if rows == 0:
+            return "I found no rows matching that request."
+        if "top" in query or "highest" in query or "largest" in query or "best" in query:
+            return f"I found {rows} rows matching your request. Here are the top results by your criteria."
+        if "show" in query or "list" in query or "sample" in query or "first" in query:
+            return f"I returned the first {rows} rows for your query."
+        return f"I found {rows} rows and {cols} columns for your request. Here is a preview."
+
+    if isinstance(result, pd.Series):
+        values = result.to_dict()
+        pairs = [f"{k}: {v}" for k, v in list(values.items())[:6]]
+        return f"I computed the following values: {', '.join(pairs)}."
+
+    if isinstance(result, dict):
+        if not result:
+            return "I found no results."
+        pairs = [f"{k}: {v}" for k, v in list(result.items())[:6]]
+        return f"I found these values: {', '.join(pairs)}."
+
+    if isinstance(result, list):
+        if len(result) == 0:
+            return "I found no results."
+        if all(isinstance(item, dict) for item in result):
+            return f"I returned {len(result)} rows from your dataset. Here is a preview of the first records."
+        return f"I returned {len(result)} items."
+
+    if isinstance(result, (int, float, str, bool)):
+        return f"The answer is {result}."
+
+    return "I executed your query and generated a result."
+
+
 def fallback_pandas_generator(df: pd.DataFrame, query: str) -> str:
     """Generates simple heuristic Pandas commands when LLM is unavailable."""
     query = query.lower().strip()
-    cols = [c.lower() for c in df.columns]
-    
-    # 1. Search for simple averages/mean
+    columns = df.columns.tolist()
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    product_col = find_column_by_keywords(columns, ["product", "item", "sku", "name", "category", "brand"])
+    quantity_col = find_column_by_keywords(columns, ["quantity", "sales", "sold", "units", "amount", "revenue", "count"])
+
+    if "most sold" in query or "top selling" in query or "best selling" in query or "highest sales" in query:
+        if product_col and quantity_col:
+            return f"result = df.groupby('{product_col}')['{quantity_col}'].sum().sort_values(ascending=False).head(5).reset_index().to_dict(orient='records')"
+        if product_col:
+            return f"result = df['{product_col}'].value_counts().head(5).to_dict()"
+        if quantity_col:
+            return f"result = df.nlargest(5, '{quantity_col}').reset_index().to_dict(orient='records')"
+
     if "average" in query or "mean" in query:
-        for c in df.columns:
+        for c in columns:
             if c.lower() in query and pd.api.types.is_numeric_dtype(df[c]):
                 return f"result = f'Average of {c} is {{df[\"{c}\"].mean():.2f}}'"
-        # Global numeric averages
-        num_cols = df.select_dtypes(include=['number']).columns.tolist()
-        if num_cols:
-            return f"result = df[{num_cols}].mean().to_dict()"
-            
-    # 2. Maximum/highest
+        if numeric_cols:
+            return f"result = df[{json.dumps(numeric_cols)}].mean().to_dict()"
+
     if "max" in query or "highest" in query:
-        for c in df.columns:
+        for c in columns:
             if c.lower() in query and pd.api.types.is_numeric_dtype(df[c]):
                 return f"result = f'Maximum of {c} is {{df[\"{c}\"].max()}}'"
-        # Global maxes
-        num_cols = df.select_dtypes(include=['number']).columns.tolist()
-        if num_cols:
-            return f"result = df[{num_cols}].max().to_dict()"
-            
-    # 3. Minimum/lowest
-    if "min" in query or "lowest" in query:
-        for c in df.columns:
+        if numeric_cols:
+            return f"result = df[{json.dumps(numeric_cols)}].max().to_dict()"
+
+    if "min" in query or "lowest" in query or "minimum" in query:
+        for c in columns:
             if c.lower() in query and pd.api.types.is_numeric_dtype(df[c]):
                 return f"result = f'Minimum of {c} is {{df[\"{c}\"].min()}}'"
-                
-    # 4. Describe / Info
+
     if "describe" in query or "summary" in query or "statistics" in query:
         return "result = df.describe().to_dict()"
-        
-    # 5. Row count
-    if "how many rows" in query or "count" in query or "size" in query:
+
+    if "how many rows" in query or "rows" in query or "count" in query or "size" in query:
         return "result = f'Total rows: {len(df)}'"
-        
-    # Default to top 5 rows
+
+    if "sample" in query or "show me" in query or "top 5" in query or "first 5" in query:
+        return "result = df.head().to_dict(orient='records')"
+
     return "result = df.head().to_dict(orient='records')"
 
 @router.post("/project/{project_id}", response_model=ChatMessageOut)
@@ -145,21 +214,19 @@ def send_chat_message(
     # Formulate answer content
     if success:
         if result is not None:
+            ans_content = summarize_result(result, message_in.content)
             if isinstance(result, pd.DataFrame):
-                ans_content = f"Query completed. Found {len(result)} rows."
-                output_str = result.to_json(orient="records")
+                output_str = safe_json_dumps(result.to_dict(orient='records'))
             elif isinstance(result, pd.Series):
-                ans_content = "Query results compiled:"
-                output_str = result.to_json()
+                output_str = safe_json_dumps(result.to_dict())
             else:
-                ans_content = str(result)
-                output_str = stdout_str
+                output_str = safe_json_dumps(result)
         else:
-            ans_content = stdout_str if stdout_str else "Executed successfully but returned no output."
-            output_str = stdout_str
+            ans_content = stdout_str.strip() or "Executed successfully but returned no output."
+            output_str = safe_json_dumps(stdout_str.strip())
     else:
-        ans_content = f"Failed to execute analytical query: {stdout_str}"
-        output_str = stdout_str
+        ans_content = f"Failed to execute analytical query: {stdout_str.strip()}"
+        output_str = safe_json_dumps(stdout_str.strip())
         
     # Save Assistant message
     assistant_msg = ChatMessage(

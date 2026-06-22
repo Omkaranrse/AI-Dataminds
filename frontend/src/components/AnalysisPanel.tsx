@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Play, Sparkles, Loader2, Award, TrendingUp, AlertCircle, BarChart3 } from "lucide-react";
+import { Play, Sparkles, Loader2, Award, TrendingUp, AlertCircle, BarChart3, Bookmark } from "lucide-react";
 import api from "@/lib/api";
 import {
   BarChart,
@@ -48,6 +48,27 @@ export default function AnalysisPanel({ dataset, projectId }: AnalysisPanelProps
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [initLoading, setInitLoading] = useState(true);
+  const [pinnedInsights, setPinnedInsights] = useState<string[]>([]);
+
+  const extractBusinessInsights = (content?: string) => {
+    if (!content) return [];
+    const sentences = content
+      .split(/\n|\.|\!|\?/) // split text into sentences
+      .map((segment) => segment.trim())
+      .filter(Boolean)
+      .filter((sentence) => sentence.length > 20);
+
+    const uniqueSentences = Array.from(new Set(sentences));
+    return uniqueSentences.slice(0, 3);
+  };
+
+  const reportInsights = extractBusinessInsights(report?.content);
+
+  const togglePinInsight = (insight: string) => {
+    setPinnedInsights((prev) =>
+      prev.includes(insight) ? prev.filter((item) => item !== insight) : [...prev, insight]
+    );
+  };
 
   const fetchLatestReport = async () => {
     if (!dataset) {
@@ -57,15 +78,9 @@ export default function AnalysisPanel({ dataset, projectId }: AnalysisPanelProps
     setInitLoading(true);
     try {
       const response = await api.get(`/analysis/project/${projectId}`);
-      // Find report matching current dataset
-      const currentReport = response.data.find(
-        (r: AnalysisReport) => r.created_at
-      ); // get latest
-      if (currentReport) {
-        setReport(currentReport);
-      } else {
-        setReport(null);
-      }
+      const reports: AnalysisReport[] = Array.isArray(response.data) ? response.data : [];
+      const currentReport = reports.length > 0 ? reports[0] : null;
+      setReport(currentReport);
     } catch (error) {
       console.error("Failed to load report", error);
     } finally {
@@ -150,10 +165,87 @@ export default function AnalysisPanel({ dataset, projectId }: AnalysisPanelProps
         <div className="grid md:grid-cols-3 gap-8">
           {/* Markdown Report Section */}
           <div className="md:col-span-2 glass-panel p-8 rounded-2xl space-y-6 overflow-y-auto max-h-[600px]">
-            <h2 className="text-xl font-bold text-white flex items-center space-x-2 border-b border-white/5 pb-4">
-              <Award className="h-5 w-5 text-accent-teal" />
-              <span>{report.title}</span>
-            </h2>
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center space-x-2">
+                  <Award className="h-5 w-5 text-accent-teal" />
+                  <span>{report.title}</span>
+                </h2>
+                <p className="text-slate-400 text-sm mt-2">
+                  Generated from the dataset and enhanced with summary insights, charts, and problem-focused recommendations.
+                </p>
+              </div>
+              <div className="rounded-2xl bg-slate-950/70 border border-white/10 px-4 py-3 text-xs text-slate-300">
+                <div className="font-semibold text-white">Report</div>
+                <div className="mt-2">Created {new Date(report.created_at).toLocaleDateString()}</div>
+              </div>
+            </div>
+
+            {pinnedInsights.length > 0 && (
+              <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs uppercase tracking-[0.25em] text-slate-500">Pinned insights</div>
+                  <button
+                    onClick={() => setPinnedInsights([])}
+                    className="text-[10px] text-accent-indigo hover:text-white transition"
+                  >
+                    Clear pins
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {pinnedInsights.map((insight, index) => (
+                    <div key={`${insight}-${index}`} className="rounded-2xl border border-white/10 bg-slate-900/80 p-4 text-sm text-slate-200">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <div className="text-[10px] uppercase tracking-[0.25em] text-slate-500">Pinned {index + 1}</div>
+                        <button
+                          onClick={() => togglePinInsight(insight)}
+                          className="flex items-center gap-1 text-slate-400 hover:text-white text-xs"
+                        >
+                          <Bookmark className="h-3.5 w-3.5" />
+                          Unpin
+                        </button>
+                      </div>
+                      <p className="leading-relaxed">{insight}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {reportInsights.length > 0 && (
+              <div className="space-y-4">
+                <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+                  <div className="text-xs uppercase tracking-[0.25em] text-slate-500 mb-3">Top 3 business insights</div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {reportInsights.map((insight, index) => (
+                      <div key={index} className="rounded-2xl border border-white/10 bg-slate-900/80 p-4 text-sm text-slate-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] uppercase tracking-[0.25em] text-slate-500">Insight {index + 1}</span>
+                          <button
+                            onClick={() => togglePinInsight(insight)}
+                            className={`flex items-center gap-1 text-xs ${pinnedInsights.includes(insight) ? 'text-emerald-400' : 'text-slate-400 hover:text-white'}`}
+                          >
+                            <Bookmark className="h-3.5 w-3.5" />
+                            {pinnedInsights.includes(insight) ? 'Pinned' : 'Pin'}
+                          </button>
+                        </div>
+                        <p className="leading-relaxed">{insight}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+                  <div className="text-xs uppercase tracking-[0.25em] text-slate-500 mb-3">Key insights</div>
+                  <ul className="space-y-2 text-sm text-slate-300 list-disc list-inside">
+                    {reportInsights.map((insight, index) => (
+                      <li key={index} className="leading-relaxed">{insight}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
             <div className="prose prose-invert max-w-none text-slate-300 text-sm leading-relaxed whitespace-pre-line">
               {report.content}
             </div>

@@ -14,6 +14,7 @@ import {
   Sliders,
   Table
 } from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import api from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
 import AnalysisPanel from "@/components/AnalysisPanel";
@@ -65,6 +66,25 @@ export default function ProjectWorkspace({ params }: { params: { id: string } })
   const [dragActive, setDragActive] = useState(false);
   const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[] } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+
+  const activeDatasetSummary = activeDataset?.summary;
+  const missingColumns = activeDatasetSummary
+    ? activeDatasetSummary.columns.filter((col) => col.null_count > 0).length
+    : 0;
+  const numericColumnCount = activeDatasetSummary
+    ? activeDatasetSummary.columns.filter((col) => col.type === "int" || col.type === "float64" || col.type === "float").length
+    : 0;
+
+  const topMissingColumns = activeDatasetSummary
+    ? [...activeDatasetSummary.columns]
+        .sort((a, b) => b.null_percentage - a.null_percentage)
+        .slice(0, 5)
+    : [];
+  const topVariableColumns = activeDatasetSummary
+    ? [...activeDatasetSummary.columns]
+        .sort((a, b) => (b.unique_count ?? 0) - (a.unique_count ?? 0))
+        .slice(0, 5)
+    : [];
 
   const fetchProjectData = async () => {
     try {
@@ -267,9 +287,15 @@ export default function ProjectWorkspace({ params }: { params: { id: string } })
                             : "bg-white/30 border-white/5 text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        <div className="flex items-center space-x-2.5 truncate">
-                          <FileSpreadsheet className="h-4 w-4 shrink-0" />
-                          <span className="text-xs font-semibold truncate">{dataset.filename}</span>
+                        <div className="flex-1 truncate">
+                          <div className="flex items-center space-x-2.5 truncate">
+                            <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                            <span className="text-xs font-semibold truncate">{dataset.filename}</span>
+                          </div>
+                          <div className="mt-1 text-[10px] text-slate-500 flex flex-wrap gap-2">
+                            <span>{dataset.row_count} rows</span>
+                            <span>{dataset.column_count} cols</span>
+                          </div>
                         </div>
                         {dataset.cleaned_filepath && (
                           <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full shrink-0">
@@ -284,6 +310,112 @@ export default function ProjectWorkspace({ params }: { params: { id: string } })
                 {/* Dataset Profiling and preview */}
                 {activeDataset && (
                   <div className="lg:col-span-2 space-y-8">
+                    {/* Dataset overview metrics */}
+                    <div className="glass-panel p-6 rounded-2xl space-y-6">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <div>
+                          <h3 className="text-base font-bold text-white">{activeDataset.filename}</h3>
+                          <p className="text-slate-400 text-sm mt-1">
+                            Structure: <span className="font-semibold text-white">{activeDataset.row_count}</span> rows × <span className="font-semibold text-white">{activeDataset.column_count}</span> columns
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full sm:w-auto">
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-center">
+                            <div className="text-sm font-semibold text-white">{activeDataset.row_count}</div>
+                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mt-1">Rows</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-center">
+                            <div className="text-sm font-semibold text-white">{activeDataset.column_count}</div>
+                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mt-1">Columns</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-center">
+                            <div className="text-sm font-semibold text-white">{missingColumns}</div>
+                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mt-1">Null columns</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-center">
+                            <div className="text-sm font-semibold text-white">{numericColumnCount}</div>
+                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mt-1">Numeric cols</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-2">
+                          <p className="text-sm font-semibold text-white">Cleaning Suggestions</p>
+                          <p className="text-xs text-slate-400 leading-relaxed">
+                            {activeDataset.cleaning_suggestions.length > 0
+                              ? `Found ${activeDataset.cleaning_suggestions.length} issues requiring attention.`
+                              : "No data quality issues detected. Your dataset is ready for analysis."}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-2">
+                          <p className="text-sm font-semibold text-white">Preview Status</p>
+                          <p className="text-xs text-slate-400 leading-relaxed">
+                            {previewData ? "Preview loaded successfully." : "Dataset preview is available once the data is parsed."}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* EDA Snapshot */}
+                    <div className="glass-panel p-6 rounded-2xl space-y-6">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-semibold text-white">EDA Snapshot</p>
+                          <p className="text-xs text-slate-400 mt-2 max-w-2xl leading-relaxed">
+                            This dataset contains {activeDataset.column_count} columns and {activeDataset.row_count} rows. The agent has identified the highest missing-value columns and the most variable features for fast exploration.
+                          </p>
+                        </div>
+                        <div className="rounded-2xl bg-slate-950/70 border border-white/10 p-3 text-xs text-slate-300">
+                          <div className="font-semibold text-white">Quick pulse</div>
+                          <div className="mt-2">Missing columns: {missingColumns}</div>
+                          <div>Numeric features: {numericColumnCount}</div>
+                          <div>Top variable columns: {topVariableColumns.length}</div>
+                        </div>
+                      </div>
+
+                      <div className="grid lg:grid-cols-2 gap-4">
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                          <div className="text-xs uppercase tracking-[0.25em] text-slate-500 mb-3">Highest missingness</div>
+                          {topMissingColumns.length === 0 ? (
+                            <p className="text-xs text-slate-400">No missing values detected in the top features.</p>
+                          ) : (
+                            <div className="h-[220px]">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={topMissingColumns.map((col) => ({ name: col.name, missing: Number(col.null_percentage.toFixed(1)) }))} layout="vertical" margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" vertical={false} />
+                                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} unit="%" />
+                                  <YAxis type="category" dataKey="name" width={110} tick={{ fill: '#cbd5e1', fontSize: 10 }} />
+                                  <Tooltip contentStyle={{ background: 'rgba(15, 23, 42, 0.95)', borderColor: 'rgba(255,255,255,0.1)', borderRadius: 8, color: '#fff' }} formatter={(value: number) => [`${value}%`, 'Missing']} />
+                                  <Bar dataKey="missing" fill="#6366f1" radius={[4, 4, 4, 4]} />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                          <div className="text-xs uppercase tracking-[0.25em] text-slate-500">Top variable columns</div>
+                          {topVariableColumns.length === 0 ? (
+                            <p className="text-xs text-slate-400">No variable numeric features detected yet.</p>
+                          ) : (
+                            <div className="space-y-3">
+                              {topVariableColumns.map((col, idx) => (
+                                <div key={col.name} className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
+                                  <div className="flex items-center justify-between text-sm text-white font-semibold">
+                                    <span>{col.name}</span>
+                                    <span>{col.unique_count} unique</span>
+                                  </div>
+                                  <div className="mt-2 text-[11px] text-slate-400">
+                                    {col.type} · {col.null_count} missing values · {col.null_percentage.toFixed(1)}% missing
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Profiling Stats */}
                     <div className="glass-panel p-6 rounded-2xl">
                       <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-6">
@@ -374,7 +506,7 @@ export default function ProjectWorkspace({ params }: { params: { id: string } })
                         </div>
                       ) : (
                         <div className="text-center py-10 text-xs text-slate-500">
-                          Failed to load preview data.
+                          No preview available yet. Upload or select a dataset to inspect a preview.
                         </div>
                       )}
                     </div>
