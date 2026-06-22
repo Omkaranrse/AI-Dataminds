@@ -1,21 +1,238 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Send, Terminal, Database, MessageSquare, Code, Loader2 } from "lucide-react";
-import api from "@/lib/api";
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Send, Database, MessageSquare, Code,
+  Loader2, User, Bot, ChevronDown, ChevronUp
+} from "lucide-react";
+import api, { API_URL } from "@/lib/api";
 
 interface ChatMessage {
   id: number;
-  role: string;
+  role: "user" | "assistant";
   content: string;
   code_executed?: string;
   code_output?: string;
   created_at: string;
+  isStreaming?: boolean;
 }
 
 interface ChatPanelProps {
   projectId: number;
 }
+
+// ── Stream helper ─────────────────────────────────────────────────────────────
+async function streamChat(
+  projectId: number,
+  content: string,
+  history: { role: string; content: string }[],
+  onChunk: (text: string) => void,
+  onDone: (msg: ChatMessage) => void,
+  onError: (err: string) => void
+) {
+  try {
+    const token = localStorage.getItem("token");
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(
+      `${API_URL}/api/v1/chat/project/${projectId}/stream`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ content, history }),
+      }
+    );
+
+    if (!res.ok || !res.body) {
+      // stream endpoint failed → try regular POST
+      const fallback = await api.post(`/chat/project/${projectId}`, { content });
+      onDone(fallback.data);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let accumulated = "";
+    let metaPayload: { code_executed?: string; code_output?: string } = {};
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() ?? "";
+
+      for (const event of events) {
+        const line = event;
+        if (!line.startsWith("data: ")) continue;
+        const text = line.slice(6);
+        if (text === "[DONE]" || text.trim() === "") continue;
+
+        if (text.startsWith("__META__")) {
+          try { metaPayload = JSON.parse(text.slice(8)); } catch { /* ignore */ }
+          continue;
+        }
+
+        accumulated += text;
+        onChunk(accumulated);
+      }
+    }
+
+    if (!accumulated) {
+      // Nothing streamed → fallback
+      const fallback = await api.post(`/chat/project/${projectId}`, { content });
+      onDone(fallback.data);
+    } else {
+      onDone({
+        id: Date.now(),
+        role: "assistant",
+        content: accumulated,
+        code_executed: metaPayload.code_executed,
+        code_output: metaPayload.code_output,
+        created_at: new Date().toISOString(),
+      });
+    }
+  } catch {
+    // Network error → plain POST fallback
+    try {
+      const fallback = await api.post(`/chat/project/${projectId}`, { content });
+      onDone(fallback.data);
+    } catch (err: any) {
+      onError(err?.response?.data?.detail || "Failed to get a reply.");
+    }
+  }
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function CodeBlock({ code }: { code: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 border border-white/10 rounded-xl overflow-hidden text-[11px]">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-slate-900/80 text-slate-400 hover:text-white transition"
+      >
+        <div className="flex items-center gap-1.5">
+          <Code className="h-3 w-3" />
+          <span className="font-semibold uppercase tracking-widest text-[10px]">Code executed</span>
+        </div>
+        {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+      </button>
+      {open && (
+        <pre className="p-3 bg-black/60 text-indigo-300 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed">
+          {code}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function TableOutput({ data }: { data: Record<string, unknown>[] }) {
+  const columns = Object.keys(data[0]);
+  const rows = data.slice(0, 10);
+  return (
+    <div className="mt-3 border border-white/10 rounded-xl overflow-hidden text-xs">
+      <div className="px-3 py-2 bg-slate-900/80 text-[10px] uppercase tracking-widest text-slate-500">
+        Query results · showing {rows.length} of {data.length} rows
+      </div>
+      <div className="overflow-x-auto max-h-56">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="border-b border-white/10 bg-slate-950/80">
+              {columns.map((c) => (
+                <th key={c} className="px-3 py-2 font-semibold text-slate-300 whitespace-nowrap">{c}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition">
+                {columns.map((c) => (
+                  <td key={c} className="px-3 py-2 text-slate-300 font-mono align-top whitespace-nowrap">
+                    {row[c] !== null && row[c] !== undefined ? String(row[c]) : "—"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DataOutput({ raw }: { raw: string }) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object") {
+      return <TableOutput data={parsed as Record<string, unknown>[]} />;
+    }
+    if (typeof parsed === "object" && parsed !== null) {
+      return (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {Object.entries(parsed).map(([k, v]) => (
+            <div key={k} className="rounded-lg border border-white/10 bg-white/5 p-2.5">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500">{k}</div>
+              <div className="mt-1 text-sm font-mono text-slate-200 break-words">
+                {typeof v === "object" ? JSON.stringify(v) : String(v)}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+  } catch { /* not JSON */ }
+  return (
+    <pre className="mt-3 rounded-xl border border-white/10 bg-slate-950/70 p-3 text-[12px] font-mono text-slate-300 whitespace-pre-wrap">
+      {raw}
+    </pre>
+  );
+}
+
+function MessageBubble({ msg }: { msg: ChatMessage }) {
+  const isUser = msg.role === "user";
+  return (
+    <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+      <div
+        className={`shrink-0 h-8 w-8 rounded-full flex items-center justify-center shadow-md ${
+          isUser
+            ? "bg-gradient-to-br from-indigo-500 to-purple-600"
+            : "bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10"
+        }`}
+      >
+        {isUser ? <User className="h-4 w-4 text-white" /> : <Bot className="h-4 w-4 text-indigo-300" />}
+      </div>
+
+      <div className={`flex flex-col max-w-[78%] ${isUser ? "items-end" : "items-start"}`}>
+        <span className="text-[10px] text-slate-500 mb-1 px-1">
+          {isUser ? "You" : "Assistant"}
+        </span>
+        <div
+          className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
+            isUser
+              ? "bg-gradient-to-br from-indigo-600 to-purple-700 text-white rounded-tr-none"
+              : "bg-white/5 border border-white/10 text-slate-200 rounded-tl-none"
+          }`}
+        >
+          <div className="whitespace-pre-wrap break-words">
+            {msg.content}
+            {msg.isStreaming && (
+              <span className="inline-block w-1.5 h-4 ml-0.5 bg-indigo-400 animate-pulse rounded-sm align-middle" />
+            )}
+          </div>
+          {msg.code_executed && !msg.isStreaming && <CodeBlock code={msg.code_executed} />}
+          {msg.code_output && !msg.isStreaming && <DataOutput raw={msg.code_output} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 
 export default function ChatPanel({ projectId }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -23,243 +240,152 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
   const [loading, setLoading] = useState(false);
   const [initLoading, setInitLoading] = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const buildHistory = useCallback(
+    () =>
+      messages
+        .filter((m) => !m.isStreaming)
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: m.content })),
+    [messages]
+  );
 
   const fetchHistory = async () => {
     try {
-      const response = await api.get(`/chat/project/${projectId}`);
-      setMessages(response.data);
-    } catch (error) {
-      console.error("Failed to load chat history", error);
+      const res = await api.get(`/chat/project/${projectId}`);
+      setMessages(res.data);
+    } catch (err) {
+      console.error("Failed to load chat history", err);
     } finally {
       setInitLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchHistory();
-  }, [projectId]);
+  useEffect(() => { fetchHistory(); }, [projectId]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
-
-  const handleSendMessage = async (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || loading) return;
+    const text = input.trim();
+    if (!text || loading) return;
 
-    const userText = input;
     setInput("");
     setLoading(true);
 
-    // Optimistic user message append
-    const tempUserMsg: ChatMessage = {
+    const userMsg: ChatMessage = {
       id: Date.now(),
       role: "user",
-      content: userText,
-      created_at: new Date().toISOString()
+      content: text,
+      created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, tempUserMsg]);
+    const placeholder: ChatMessage = {
+      id: Date.now() + 1,
+      role: "assistant",
+      content: "",
+      created_at: new Date().toISOString(),
+      isStreaming: true,
+    };
 
-    try {
-      const response = await api.post(`/chat/project/${projectId}`, {
-        content: userText
-      });
-      setMessages((prev) => [...prev.filter((m) => m.id !== tempUserMsg.id), response.data]);
-    } catch (error: any) {
-      const errMsg: ChatMessage = {
-        id: Date.now() + 1,
-        role: "assistant",
-        content: `Error: ${error.response?.data?.detail || "Failed to get reply."}`,
-        created_at: new Date().toISOString()
-      };
-      setMessages((prev) => [...prev, errMsg]);
-    } finally {
-      setLoading(false);
-    }
-  };
+    setMessages((prev) => [...prev, userMsg, placeholder]);
+    const history = buildHistory();
 
-  const parseJsonOutput = (outputStr?: string) => {
-    if (!outputStr) return null;
-    try {
-      return JSON.parse(outputStr);
-    } catch {
-      return outputStr;
-    }
-  };
-
-  const renderOutput = (outputStr?: string) => {
-    if (!outputStr) return null;
-    const parsed = parseJsonOutput(outputStr);
-
-    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object") {
-      const columns = Object.keys(parsed[0]);
-      return (
-        <div className="overflow-x-auto border border-white/10 rounded-2xl mt-4 max-h-72 bg-slate-950/70">
-          <div className="px-4 py-3 border-b border-white/10 text-[11px] uppercase tracking-[0.2em] text-slate-500 bg-slate-900/80">
-            Result preview
-          </div>
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-white/10 bg-slate-950/80">
-                {columns.map((col) => (
-                  <th key={col} className="p-2 font-semibold text-slate-300">
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {parsed.slice(0, 10).map((row, idx) => (
-                <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition">
-                  {columns.map((col) => (
-                    <td key={col} className="p-2 text-slate-300 font-mono align-top">
-                      {row[col] !== null && row[col] !== undefined ? String(row[col]) : "-"}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {parsed.length > 10 && (
-            <div className="px-4 py-2 text-[11px] text-slate-400 bg-slate-900/80 border-t border-white/10">
-              Showing top 10 of {parsed.length} rows
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    if (Array.isArray(parsed)) {
-      return (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-[12px] text-slate-300">
-          <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-slate-500">Result list</div>
-          <ul className="list-disc list-inside space-y-1">
-            {parsed.slice(0, 20).map((value, idx) => (
-              <li key={idx} className="font-mono text-slate-300">{typeof value === "object" ? JSON.stringify(value) : String(value)}</li>
-            ))}
-          </ul>
-          {parsed.length > 20 && <div className="mt-2 text-[11px] text-slate-500">Showing top 20 of {parsed.length} items</div>}
-        </div>
-      );
-    }
-
-    if (parsed && typeof parsed === "object") {
-      return (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-[12px] text-slate-300">
-          <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-slate-500">Result summary</div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {Object.entries(parsed).map(([key, value]) => (
-              <div key={key} className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{key}</div>
-                <div className="mt-1 text-sm font-mono text-slate-200 break-words">{typeof value === "object" ? JSON.stringify(value) : String(value)}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    return <pre className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-[12px] font-mono text-slate-300 whitespace-pre-wrap">{String(parsed)}</pre>;
+    await streamChat(
+      projectId,
+      text,
+      history,
+      (accumulated) => {
+        setMessages((prev) =>
+          prev.map((m) => m.id === placeholder.id ? { ...m, content: accumulated } : m)
+        );
+      },
+      (finalMsg) => {
+        setMessages((prev) =>
+          prev.map((m) => m.id === placeholder.id ? { ...finalMsg, isStreaming: false } : m)
+        );
+        setLoading(false);
+        inputRef.current?.focus();
+      },
+      (errMsg) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === placeholder.id
+              ? { ...m, content: `Sorry, something went wrong: ${errMsg}`, isStreaming: false }
+              : m
+          )
+        );
+        setLoading(false);
+      }
+    );
   };
 
   return (
-    <div className="flex flex-col h-[600px] glass-panel rounded-2xl overflow-hidden">
+    <div className="flex flex-col h-[640px] rounded-2xl overflow-hidden border border-white/10 bg-slate-900/60 backdrop-blur-md shadow-2xl">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-white/5 bg-black/20 flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <MessageSquare className="h-5 w-5 text-accent-indigo" />
+      <div className="px-5 py-3.5 border-b border-white/5 bg-black/30 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow">
+            <MessageSquare className="h-4 w-4 text-white" />
+          </div>
           <div>
-            <h3 className="text-sm font-bold text-white">Data Chat Assistant</h3>
-            <p className="text-[11px] text-slate-400">Ask insightful questions about your dataset and get fast analytical answers.</p>
+            <h3 className="text-sm font-bold text-white leading-none">Data Chat</h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">Ask questions about your dataset in plain English</p>
           </div>
         </div>
-        <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full border border-emerald-500/20 bg-emerald-500/5 text-[10px] text-emerald-400">
-          <Terminal className="h-3 w-3" />
-          <span>Pandas Safe Sandbox Active</span>
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-emerald-500/20 bg-emerald-500/5">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-[10px] text-emerald-400 font-medium">Live</span>
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 p-6 overflow-y-auto space-y-6">
+      <div className="flex-1 px-5 py-5 overflow-y-auto space-y-5 scroll-smooth">
         {initLoading ? (
           <div className="flex justify-center items-center h-full">
-            <Loader2 className="h-8 w-8 text-accent-indigo animate-spin" />
+            <Loader2 className="h-7 w-7 text-indigo-400 animate-spin" />
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center space-y-3">
-            <Database className="h-10 w-10 text-slate-600" />
-            <h4 className="text-sm font-semibold text-slate-300">Ask anything about your data</h4>
-            <p className="text-xs text-slate-500 max-w-xs leading-relaxed">
-              E.g., "what is the average values in age column?" or "show me the details of rows where score is above 90".
-            </p>
+          <div className="flex flex-col items-center justify-center h-full text-center gap-3 pb-10">
+            <div className="h-14 w-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+              <Database className="h-7 w-7 text-slate-500" />
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-slate-300">Ask anything about your data</h4>
+              <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
+                Try <span className="text-indigo-400">"What's the average sales?"</span> or{" "}
+                <span className="text-indigo-400">"Which category has the highest revenue?"</span>
+              </p>
+            </div>
           </div>
         ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex flex-col max-w-[85%] ${
-                msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"
-              }`}
-            >
-              <div
-                className={`p-4 rounded-3xl text-sm leading-relaxed shadow-[0_20px_60px_-40px_rgba(0,0,0,0.6)] ${
-                  msg.role === "user"
-                    ? "bg-gradient-to-r from-accent-indigo to-accent-purple text-white rounded-br-none"
-                    : "bg-white/5 text-slate-200 rounded-bl-none border border-white/10"
-                } break-words`}
-              >
-                <div className="whitespace-pre-wrap">{msg.content}</div>
-                
-                {/* Code execution logs */}
-                {msg.code_executed && (
-                  <div className="mt-3 border-t border-white/10 pt-3">
-                    <details className="group cursor-pointer">
-                      <summary className="text-[10px] text-slate-400 font-semibold flex items-center space-x-1 hover:text-white select-none">
-                        <Code className="h-3.5 w-3.5" />
-                        <span>Code Executed</span>
-                      </summary>
-                      <pre className="text-[10px] font-mono bg-black/50 p-2.5 rounded-lg text-indigo-300 border border-white/5 overflow-x-auto mt-2 cursor-text">
-                        {msg.code_executed}
-                      </pre>
-                    </details>
-                  </div>
-                )}
-                
-                {/* Custom Output rendering (Table / String) */}
-                {msg.code_output && (
-                  <div className="mt-2">
-                    {renderOutput(msg.code_output)}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))
-        )}
-        {loading && (
-          <div className="flex items-center space-x-2 text-slate-500 text-xs">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span>Agent is compiling Pandas query...</span>
-          </div>
+          messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
         )}
         <div ref={chatEndRef} />
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSendMessage} className="p-4 border-t border-white/5 bg-black/20 flex gap-3">
+      <form
+        onSubmit={handleSend}
+        className="px-4 py-3.5 border-t border-white/5 bg-black/20 flex gap-2.5 shrink-0"
+      >
         <input
+          ref={inputRef}
           type="text"
-          placeholder="Ask a question about the uploaded dataset..."
+          placeholder="Ask a question about your dataset…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={loading}
-          className="flex-1 bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white placeholder-slate-500 focus:outline-none focus:border-accent-indigo transition text-sm disabled:opacity-50"
+          className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/60 transition disabled:opacity-40"
         />
         <button
           type="submit"
           disabled={loading || !input.trim()}
-          className="p-3 bg-gradient-to-r from-accent-purple to-accent-indigo hover:opacity-90 disabled:opacity-50 transition rounded-xl text-white shadow-md flex items-center justify-center shrink-0"
+          className="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 hover:opacity-90 disabled:opacity-40 transition flex items-center justify-center shadow-md"
         >
-          <Send className="h-4 w-4" />
+          {loading
+            ? <Loader2 className="h-4 w-4 text-white animate-spin" />
+            : <Send className="h-4 w-4 text-white" />
+          }
         </button>
       </form>
     </div>

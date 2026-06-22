@@ -1,5 +1,6 @@
 import os
 import uuid
+import math
 import pandas as pd
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
@@ -11,6 +12,25 @@ from app.api.deps import get_current_user
 from app.config import settings
 
 router = APIRouter()
+
+def normalize_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: normalize_json_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_json_value(v) for v in value]
+    if isinstance(value, tuple):
+        return [normalize_json_value(v) for v in value]
+    if isinstance(value, float):
+        if math.isnan(value) or not math.isfinite(value):
+            return None
+        return value
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    return value
+
 
 def profile_dataset(filepath: str, filename: str) -> Dict[str, Any]:
     """Perform basic profiling of the uploaded dataset."""
@@ -177,9 +197,11 @@ def get_dataset_preview(
                 
         # Fill NaN values with None so JSON serialization is valid
         df = df.where(pd.notnull(df), None)
+        rows = df.to_dict(orient="records")
+        rows = normalize_json_value(rows)
         return {
             "columns": list(df.columns),
-            "rows": df.to_dict(orient="records")
+            "rows": rows
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read dataset preview: {str(e)}")

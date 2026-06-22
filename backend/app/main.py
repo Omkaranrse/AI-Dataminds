@@ -2,12 +2,10 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
 from app.config import settings
 from app.db.session import init_db
 from app.api.endpoints import auth, projects, datasets, analysis, chat
 
-# Set up logging format
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -21,7 +19,6 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-# Set CORS origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
@@ -30,7 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Startup DB initialization
+
 @app.on_event("startup")
 def on_startup():
     logger.info("Initializing database...")
@@ -40,23 +37,23 @@ def on_startup():
     except Exception as e:
         logger.error(f"Failed to initialize database: {str(e)}")
 
-# Health check
+
 @app.get("/health", tags=["Health"])
 def health_check():
     return {"status": "healthy", "project": settings.PROJECT_NAME}
 
-# Routes
-app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Auth"])
+
+app.include_router(auth.router,     prefix=f"{settings.API_V1_STR}/auth",     tags=["Auth"])
 app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["Projects"])
 app.include_router(datasets.router, prefix=f"{settings.API_V1_STR}/datasets", tags=["Datasets"])
 app.include_router(analysis.router, prefix=f"{settings.API_V1_STR}/analysis", tags=["Analysis"])
-app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["Chat"])
+app.include_router(chat.router,     prefix=f"{settings.API_V1_STR}/chat",     tags=["Chat"])
 
-# Global Exception handler
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception occurred on path {request.url.path}: {str(exc)}")
+    logger.error(f"Unhandled exception on {request.url.path}: {str(exc)}")
     return JSONResponse(
         status_code=500,
-        content={"detail": "An internal server error occurred. Please check system logs."}
+        content={"detail": "An internal server error occurred."}
     )

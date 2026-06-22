@@ -2,17 +2,21 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+
 class Token(BaseModel):
     access_token: str
     token_type: str
 
+
 class TokenPayload(BaseModel):
     sub: Optional[str] = None
+
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str
+
 
 class UserOut(BaseModel):
     id: int
@@ -24,9 +28,11 @@ class UserOut(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ProjectCreate(BaseModel):
     name: str
     description: Optional[str] = None
+
 
 class ProjectOut(BaseModel):
     id: int
@@ -37,6 +43,7 @@ class ProjectOut(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class DatasetOut(BaseModel):
     id: int
@@ -53,8 +60,15 @@ class DatasetOut(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ChatMessageCreate(BaseModel):
     content: str
+
+
+class ChatRequest(BaseModel):
+    content: str
+    history: Optional[List[Dict[str, str]]] = []
+
 
 class ChatMessageOut(BaseModel):
     id: int
@@ -67,6 +81,7 @@ class ChatMessageOut(BaseModel):
     class Config:
         from_attributes = True
 
+
 class AnalysisReportOut(BaseModel):
     id: int
     title: str
@@ -77,5 +92,6 @@ class AnalysisReportOut(BaseModel):
     class Config:
         from_attributes = True
 
+
 class CleanDatasetRequest(BaseModel):
-    actions: List[Dict[str, Any]] # e.g. [{"action": "drop_duplicates"}, {"action": "fill_missing", "column": "age", "strategy": "mean"}]
+    actions: List[Dict[str, Any]]
