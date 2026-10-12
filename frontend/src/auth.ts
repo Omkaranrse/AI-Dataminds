@@ -38,7 +38,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         role: data.user.role, appEmailVerified: data.user.email_verified,
         accessToken: data.access_token, refreshToken: data.refresh_token, accessTokenExpires: Date.now() + data.expires_in * 1000 };
     }}),
-    Google, GitHub,
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID || process.env.AUTH_GOOGLE_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || process.env.AUTH_GOOGLE_SECRET || "",
+    }),
+    GitHub({
+      clientId: process.env.GITHUB_ID || process.env.AUTH_GITHUB_ID || "",
+      clientSecret: process.env.GITHUB_SECRET || process.env.AUTH_GITHUB_SECRET || "",
+    }),
   ],
   callbacks: {
     async jwt({ token, user, account }) {
@@ -52,14 +59,49 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return token;
       }
       if (user && account && account.type === "oauth") {
-        const response = await fetch(`${serverApi}/auth/oauth/exchange`, { method: "POST",
-          headers: { "Content-Type": "application/json", "X-Internal-Auth": process.env.INTERNAL_AUTH_SECRET! },
-          body: JSON.stringify({ provider: account.provider, provider_account_id: account.providerAccountId,
-            email: user.email, name: user.name ?? user.email, image_url: user.image }), cache: "no-store" });
-        if (!response.ok) throw new Error("OAuth exchange failed");
-        const data = await response.json() as TokenPayload;
-        return { ...token, sub: data.user.id, role: data.user.role, emailVerified: data.user.email_verified,
-          accessToken: data.access_token, refreshToken: data.refresh_token, accessTokenExpires: Date.now() + data.expires_in * 1000 };
+        const email =
+          user.email ||
+          `${account.provider}-${account.providerAccountId}@users.noreply.${account.provider}.com`;
+        const name =
+          user.name?.trim() ||
+          user.email?.split("@")[0] ||
+          `${account.provider.charAt(0).toUpperCase() + account.provider.slice(1)} User`;
+        const imageUrl =
+          user.image && typeof user.image === "string" && user.image.startsWith("http")
+            ? user.image
+            : undefined;
+
+        const response = await fetch(`${serverApi}/auth/oauth/exchange`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Internal-Auth": process.env.INTERNAL_AUTH_SECRET!,
+          },
+          body: JSON.stringify({
+            provider: account.provider,
+            provider_account_id: String(account.providerAccountId),
+            email,
+            name,
+            image_url: imageUrl,
+          }),
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          const errText = await response.text().catch(() => "");
+          console.error("OAuth exchange failed:", response.status, errText);
+          throw new Error("OAuth exchange failed");
+        }
+        const data = (await response.json()) as TokenPayload;
+        return {
+          ...token,
+          sub: data.user.id,
+          role: data.user.role,
+          emailVerified: data.user.email_verified,
+          accessToken: data.access_token,
+          refreshToken: data.refresh_token,
+          accessTokenExpires: Date.now() + data.expires_in * 1000,
+          error: undefined,
+        };
       }
       if (token.accessTokenExpires && Date.now() < token.accessTokenExpires - 30_000) return token;
       if (token.refreshToken) return refreshAccessToken(token);

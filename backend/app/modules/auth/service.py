@@ -113,14 +113,23 @@ class AuthService:
                 user = await self.repo.create_user(
                     email=str(data.email).lower(),
                     name=data.name.strip(),
-                    image_url=str(data.image_url) if data.image_url else None,
+                    image_url=data.image_url,
                     email_verified=True,
                 )
+            else:
+                if not user.email_verified:
+                    user.email_verified = True
+                if not user.image_url and data.image_url:
+                    user.image_url = data.image_url
             await self.repo.create_oauth_identity(
                 user_id=user.id,
                 provider=data.provider,
                 provider_account_id=data.provider_account_id,
             )
+        else:
+            if not user.image_url and data.image_url:
+                user.image_url = data.image_url
+                await self.session.commit()
         return await self._issue_session(user, context)
 
     async def _issue_session(self, user: User, context: ClientContext) -> TokenResponse:

@@ -11,7 +11,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    member_role = sa.Enum("OWNER", "EDITOR", "VIEWER", name="project_member_role")
+    member_role = sa.Enum(
+        "OWNER", "EDITOR", "VIEWER", name="project_member_role", create_type=False
+    )
     member_role.create(op.get_bind())
     op.create_table(
         "projects",

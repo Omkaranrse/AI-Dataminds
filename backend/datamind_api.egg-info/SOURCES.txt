@@ -12,10 +12,16 @@ app/modules/auth/router.py
 app/modules/auth/schemas.py
 app/modules/auth/service.py
 app/modules/auth/domain/models.py
+app/modules/projects/repository.py
+app/modules/projects/router.py
+app/modules/projects/schemas.py
+app/modules/projects/service.py
+app/modules/projects/domain/models.py
 datamind_api.egg-info/PKG-INFO
 datamind_api.egg-info/SOURCES.txt
 datamind_api.egg-info/dependency_links.txt
 datamind_api.egg-info/requires.txt
 datamind_api.egg-info/top_level.txt
 tests/test_auth_api.py
+tests/test_projects_api.py
 tests/test_security.py

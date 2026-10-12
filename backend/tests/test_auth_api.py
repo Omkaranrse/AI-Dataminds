@@ -58,3 +58,57 @@ async def test_weak_password_is_rejected(client):
         json={"name": "Test User", "email": "test@example.com", "password": "password"},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_oauth_exchange_google_and_github(client):
+    internal_secret = "test-internal-secret-at-least-32-characters"
+
+    # Unauthorized without X-Internal-Auth
+    unauthorized = await client.post(
+        "/api/v1/auth/oauth/exchange",
+        json={
+            "provider": "google",
+            "provider_account_id": "google-12345",
+            "email": "oauth.user@gmail.com",
+            "name": "Google User",
+        },
+    )
+    assert unauthorized.status_code == 401
+
+    # Successful Google OAuth exchange
+    res_google = await client.post(
+        "/api/v1/auth/oauth/exchange",
+        headers={"X-Internal-Auth": internal_secret},
+        json={
+            "provider": "google",
+            "provider_account_id": "google-12345",
+            "email": "oauth.user@gmail.com",
+            "name": "Google User",
+            "image_url": "https://example.com/avatar.png",
+        },
+    )
+    assert res_google.status_code == 200
+    data = res_google.json()
+    assert data["user"]["email"] == "oauth.user@gmail.com"
+    assert data["user"]["email_verified"] is True
+    assert data["user"]["image_url"] == "https://example.com/avatar.png"
+    assert "access_token" in data
+    assert "refresh_token" in data
+
+    # Successful GitHub OAuth exchange linking same email
+    res_github = await client.post(
+        "/api/v1/auth/oauth/exchange",
+        headers={"X-Internal-Auth": internal_secret},
+        json={
+            "provider": "github",
+            "provider_account_id": "gh-9999",
+            "email": "oauth.user@gmail.com",
+            "name": "GitHub User",
+        },
+    )
+    assert res_github.status_code == 200
+    gh_data = res_github.json()
+    assert gh_data["user"]["id"] == data["user"]["id"]
+    assert gh_data["user"]["email"] == "oauth.user@gmail.com"
+

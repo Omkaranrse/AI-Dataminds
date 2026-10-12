@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import smtplib
 from email.message import EmailMessage
 
 from app.core.config import get_settings
+
+logger = logging.getLogger("datamind.email")
 
 
 class EmailService:
@@ -27,6 +30,14 @@ class EmailService:
         if not settings.smtp_host:
             if settings.environment == "production":
                 raise RuntimeError("SMTP_HOST is required in production")
+            logger.info(
+                "\n==================== [DEV EMAIL SIMULATION] ====================\n"
+                "To: %s\nSubject: %s\n%s\n"
+                "================================================================",
+                recipient,
+                subject,
+                body,
+            )
             return
         message = EmailMessage()
         message["From"] = settings.smtp_from

@@ -11,8 +11,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    user_role = sa.Enum("ADMIN", "USER", name="user_role")
-    action_type = sa.Enum("VERIFY_EMAIL", "RESET_PASSWORD", name="action_token_type")
+    user_role = sa.Enum("ADMIN", "USER", name="user_role", create_type=False)
+    action_type = sa.Enum(
+        "VERIFY_EMAIL", "RESET_PASSWORD", name="action_token_type", create_type=False
+    )
     user_role.create(op.get_bind())
     action_type.create(op.get_bind())
     op.create_table(

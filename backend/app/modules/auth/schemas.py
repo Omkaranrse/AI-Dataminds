@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -45,7 +45,7 @@ class OAuthExchangeRequest(BaseModel):
     provider_account_id: str = Field(min_length=1, max_length=255)
     email: EmailStr
     name: str = Field(min_length=1, max_length=120)
-    image_url: HttpUrl | None = None
+    image_url: str | None = None
 
 
 class UserResponse(BaseModel):
