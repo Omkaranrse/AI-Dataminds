@@ -48,7 +48,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, profile }) {
       if (user && account?.type === "credentials") {
         token.sub = user.id;
         token.role = user.role;
@@ -70,6 +70,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           user.image && typeof user.image === "string" && user.image.startsWith("http")
             ? user.image
             : undefined;
+        const emailVerified = Boolean(
+          (profile as Record<string, unknown> | undefined)?.email_verified ??
+          (profile as Record<string, unknown> | undefined)?.verified ??
+          Boolean(user.email)
+        );
 
         const response = await fetch(`${serverApi}/auth/oauth/exchange`, {
           method: "POST",
@@ -83,9 +88,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             email,
             name,
             image_url: imageUrl,
+            email_verified: emailVerified,
           }),
           cache: "no-store",
         });
+
         if (!response.ok) {
           const errText = await response.text().catch(() => "");
           console.error("OAuth exchange failed:", response.status, errText);

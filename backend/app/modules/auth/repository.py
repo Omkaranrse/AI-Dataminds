@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -43,11 +43,16 @@ class AuthRepository:
         return result.scalar_one_or_none()
 
     async def revoke_user_tokens(self, user_id: UUID) -> None:
+        now = datetime.now(UTC)
         await self.session.execute(
             update(RefreshToken)
             .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC))
+            .values(
+                revoked_at=now - timedelta(days=1),
+                expires_at=now - timedelta(seconds=1),
+            )
         )
+
 
     async def create_action_token(self, **values: object) -> ActionToken:
         token = ActionToken(**values)

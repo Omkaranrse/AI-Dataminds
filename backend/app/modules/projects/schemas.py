@@ -62,3 +62,6 @@ class ProjectResponse(BaseModel):
 class ProjectListResponse(BaseModel):
     items: list[ProjectResponse]
     total: int
+    limit: int = 50
+    offset: int = 0
+

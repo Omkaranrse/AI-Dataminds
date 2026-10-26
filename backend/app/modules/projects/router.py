@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Query, Response, status
 
 from app.modules.auth.dependencies import CurrentUser, SessionDep
 from app.modules.auth.schemas import MessageResponse
@@ -21,10 +21,16 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(
-    session: SessionDep, user: CurrentUser, include_archived: bool = False
+    session: SessionDep,
+    user: CurrentUser,
+    include_archived: bool = False,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ) -> ProjectListResponse:
-    items = await ProjectService(session).list_projects(user, include_archived)
-    return ProjectListResponse(items=items, total=len(items))
+    items, total = await ProjectService(session).list_projects(
+        user, include_archived, limit=limit, offset=offset
+    )
+    return ProjectListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -61,9 +67,14 @@ async def delete_project(project_id: UUID, session: SessionDep, user: CurrentUse
 
 @router.get("/{project_id}/members", response_model=list[MemberResponse])
 async def list_members(
-    project_id: UUID, session: SessionDep, user: CurrentUser
+    project_id: UUID,
+    session: SessionDep,
+    user: CurrentUser,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ) -> list[MemberResponse]:
-    return await ProjectService(session).members(project_id, user)
+    return await ProjectService(session).members(project_id, user, limit=limit, offset=offset)
+
 
 
 @router.post(

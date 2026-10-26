@@ -1,7 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Request, status
+from fastapi import APIRouter, BackgroundTasks, Header, Request, status
 
+from app.core.rate_limit import get_client_ip
 from app.modules.auth.dependencies import CurrentUser, SessionDep
 from app.modules.auth.schemas import (
     ForgotPasswordRequest,
@@ -21,20 +22,19 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 def client_context(request: Request) -> ClientContext:
-    forwarded = request.headers.get("x-forwarded-for")
-    ip = (
-        forwarded.split(",")[0].strip()
-        if forwarded
-        else request.client.host
-        if request.client
-        else None
+    ip = get_client_ip(request)
+    return ClientContext(
+        user_agent=request.headers.get("user-agent"),
+        ip_address=ip if ip != "unknown" else None,
     )
-    return ClientContext(user_agent=request.headers.get("user-agent"), ip_address=ip)
+
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterRequest, session: SessionDep) -> UserResponse:
-    user = await AuthService(session).register(data)
+async def register(
+    data: RegisterRequest, session: SessionDep, background_tasks: BackgroundTasks
+) -> UserResponse:
+    user = await AuthService(session).register(data, background_tasks=background_tasks)
     return AuthService.user_response(user)
 
 
@@ -57,9 +57,14 @@ async def logout(data: RefreshRequest, session: SessionDep) -> MessageResponse:
 @router.post(
     "/forgot-password", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED
 )
-async def forgot_password(data: ForgotPasswordRequest, session: SessionDep) -> MessageResponse:
-    await AuthService(session).request_password_reset(str(data.email))
+async def forgot_password(
+    data: ForgotPasswordRequest, session: SessionDep, background_tasks: BackgroundTasks
+) -> MessageResponse:
+    await AuthService(session).request_password_reset(
+        str(data.email), background_tasks=background_tasks
+    )
     return MessageResponse(message="If that account exists, a reset link has been sent")
+
 
 
 @router.post("/reset-password", response_model=MessageResponse)

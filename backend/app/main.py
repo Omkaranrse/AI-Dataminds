@@ -24,7 +24,7 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

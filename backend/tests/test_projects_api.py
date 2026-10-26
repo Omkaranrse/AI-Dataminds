@@ -38,6 +38,24 @@ async def test_project_lifecycle_and_optimistic_locking(client):
     listed = await client.get("/api/v1/projects", headers=authorization(owner))
     assert listed.status_code == 200
     assert listed.json()["total"] == 1
+    assert listed.json()["limit"] == 50
+    assert listed.json()["offset"] == 0
+
+    # Test limit and offset pagination
+    paginated = await client.get("/api/v1/projects?limit=10&offset=0", headers=authorization(owner))
+    assert paginated.status_code == 200
+    assert paginated.json()["limit"] == 10
+    assert paginated.json()["offset"] == 0
+    assert paginated.json()["total"] == 1
+    assert len(paginated.json()["items"]) == 1
+
+    empty_page = await client.get(
+        "/api/v1/projects?limit=10&offset=5", headers=authorization(owner)
+    )
+
+    assert empty_page.status_code == 200
+    assert empty_page.json()["total"] == 1
+    assert len(empty_page.json()["items"]) == 0
 
     updated = await client.patch(
         f"/api/v1/projects/{project['id']}",
@@ -65,6 +83,7 @@ async def test_project_lifecycle_and_optimistic_locking(client):
     assert (
         await client.get("/api/v1/projects?include_archived=true", headers=authorization(owner))
     ).json()["total"] == 1
+
 
 
 @pytest.mark.asyncio

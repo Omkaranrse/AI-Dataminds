@@ -46,6 +46,8 @@ class OAuthExchangeRequest(BaseModel):
     email: EmailStr
     name: str = Field(min_length=1, max_length=120)
     image_url: str | None = None
+    email_verified: bool = True
+
 
 
 class UserResponse(BaseModel):

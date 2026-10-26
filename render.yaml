@@ -6,10 +6,12 @@ services:
     plan: free
     region: oregon
     buildCommand: pip install --upgrade pip && pip install -e .
-    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      - fromGroup: datamind-shared-env
       - key: ENVIRONMENT
         value: production
       - key: PYTHON_VERSION
@@ -26,11 +28,32 @@ services:
         value: "15"
       - key: REFRESH_TOKEN_DAYS
         value: "30"
-      - key: INTERNAL_AUTH_SECRET
-        generateValue: true
       - key: FRONTEND_URL
         sync: false
       - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: datamind-web
+    runtime: node
+    rootDir: frontend
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - fromGroup: datamind-shared-env
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: AUTH_URL
         sync: false
 
 databases:
@@ -39,3 +62,11 @@ databases:
     user: datamind
     plan: free
     region: oregon
+
+envVarGroups:
+  - name: datamind-shared-env
+    envVars:
+      - key: INTERNAL_AUTH_SECRET
+        generateValue: true
+      - key: BACKEND_URL
+        sync: false

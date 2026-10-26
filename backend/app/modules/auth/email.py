@@ -46,11 +46,16 @@ class EmailService:
         message.set_content(body)
 
         def deliver() -> None:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
-                if settings.smtp_use_tls:
-                    smtp.starttls()
-                if settings.smtp_username and settings.smtp_password:
-                    smtp.login(settings.smtp_username, settings.smtp_password)
-                smtp.send_message(message)
+            try:
+                with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
+                    if settings.smtp_use_tls:
+                        smtp.starttls()
+                    if settings.smtp_username and settings.smtp_password:
+                        smtp.login(settings.smtp_username, settings.smtp_password)
+                    smtp.send_message(message)
+                logger.info("Email delivered to %s", recipient)
+            except Exception as exc:
+                logger.error("Failed to deliver email to %s: %s", recipient, exc)
 
         await asyncio.to_thread(deliver)
+

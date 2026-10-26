@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -37,7 +37,9 @@ class AuthService:
         self.repo = AuthRepository(session)
         self.email = email_service or EmailService()
 
-    async def register(self, data: RegisterRequest) -> User:
+    async def register(
+        self, data: RegisterRequest, background_tasks: BackgroundTasks | None = None
+    ) -> User:
         if await self.repo.get_user_by_email(str(data.email)):
             raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email exists")
         user = await self.repo.create_user(
@@ -47,8 +49,12 @@ class AuthService:
         )
         raw_token = await self._new_action_token(user.id, ActionTokenType.VERIFY_EMAIL, hours=24)
         await self.session.commit()
-        await self.email.send_verification(user.email, raw_token)
+        if background_tasks is not None:
+            background_tasks.add_task(self.email.send_verification, user.email, raw_token)
+        else:
+            await self.email.send_verification(user.email, raw_token)
         return user
+
 
     async def login(self, email: str, password: str, context: ClientContext) -> TokenResponse:
         user = await self.repo.get_user_by_email(email)
@@ -59,29 +65,60 @@ class AuthService:
         return await self._issue_session(user, context)
 
     async def refresh(self, raw_token: str, context: ClientContext) -> TokenResponse:
+        settings = get_settings()
         stored = await self.repo.get_refresh_token(token_digest(raw_token))
         now = datetime.now(UTC)
-        if not stored or stored.revoked_at or self._is_expired(stored.expires_at, now):
+        if not stored or self._is_expired(stored.expires_at, now):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
-        stored.revoked_at = now
+
         user = await self.repo.get_user(stored.user_id)
         if not user or not user.is_active:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account unavailable")
+
+        if stored.revoked_at is not None:
+            revoked_at = (
+                stored.revoked_at.replace(tzinfo=UTC)
+                if stored.revoked_at.tzinfo is None
+                else stored.revoked_at
+            )
+            elapsed = (now - revoked_at).total_seconds()
+            if 0 <= elapsed <= settings.refresh_token_grace_seconds:
+                # Concurrent refresh within grace window: return an active session
+                return await self._issue_session(user, context)
+
+            # Revocation outside grace window: token reuse detected!
+            # Revoke all refresh tokens for this user as a security safeguard
+            await self.repo.revoke_user_tokens(stored.user_id)
+            await self.session.commit()
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
+
+        stored.revoked_at = now
         return await self._issue_session(user, context)
 
     async def logout(self, raw_token: str) -> None:
         stored = await self.repo.get_refresh_token(token_digest(raw_token))
-        if stored and not stored.revoked_at:
-            stored.revoked_at = datetime.now(UTC)
+        if stored:
+            now = datetime.now(UTC)
+            # Expire immediately and set revoked_at to the past
+            # so it cannot be revived by the grace window
+            stored.expires_at = now - timedelta(seconds=1)
+            stored.revoked_at = now - timedelta(days=1)
             await self.session.commit()
 
-    async def request_password_reset(self, email: str) -> None:
+
+    async def request_password_reset(
+        self, email: str, background_tasks: BackgroundTasks | None = None
+    ) -> None:
         user = await self.repo.get_user_by_email(email)
         if not user or not user.password_hash:
             return
         token = await self._new_action_token(user.id, ActionTokenType.RESET_PASSWORD, hours=1)
         await self.session.commit()
-        await self.email.send_password_reset(user.email, token)
+        if background_tasks is not None:
+            background_tasks.add_task(self.email.send_password_reset, user.email, token)
+        else:
+            await self.email.send_password_reset(user.email, token)
+
 
     async def reset_password(self, raw_token: str, password: str) -> None:
         action = await self._valid_action_token(raw_token, ActionTokenType.RESET_PASSWORD)
@@ -114,9 +151,14 @@ class AuthService:
                     email=str(data.email).lower(),
                     name=data.name.strip(),
                     image_url=data.image_url,
-                    email_verified=True,
+                    email_verified=data.email_verified,
                 )
             else:
+                if not data.email_verified:
+                    raise HTTPException(
+                        status.HTTP_403_FORBIDDEN,
+                        "Cannot link OAuth account: provider email is not verified",
+                    )
                 if not user.email_verified:
                     user.email_verified = True
                 if not user.image_url and data.image_url:
@@ -131,6 +173,7 @@ class AuthService:
                 user.image_url = data.image_url
                 await self.session.commit()
         return await self._issue_session(user, context)
+
 
     async def _issue_session(self, user: User, context: ClientContext) -> TokenResponse:
         settings = get_settings()

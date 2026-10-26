@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     jwt_issuer: str = "datamind-api"
     access_token_minutes: int = 15
     refresh_token_days: int = 30
+    refresh_token_grace_seconds: int = 30
     frontend_url: str = "http://localhost:3000"
     internal_auth_secret: str = Field(min_length=32)
     smtp_host: str | None = None
@@ -23,6 +24,8 @@ class Settings(BaseSettings):
     smtp_from: str = "DataMind AI <no-reply@datamind.local>"
     smtp_use_tls: bool = True
     cors_origins: list[str] = ["http://localhost:3000"]
+    allowed_hosts: list[str] = ["*"]
+    trust_proxy_headers: bool = False
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -34,7 +37,7 @@ class Settings(BaseSettings):
                 return value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
     @classmethod
     def split_origins(cls, value: object) -> object:
         if isinstance(value, str):

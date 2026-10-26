@@ -34,10 +34,20 @@ class ProjectService:
         return self._project_response(project, ProjectMemberRole.OWNER, 1)
 
     async def list_projects(
-        self, user: User, include_archived: bool = False
-    ) -> list[ProjectResponse]:
-        rows = await self.repo.list_for_user(user.id, include_archived, user.role == UserRole.ADMIN)
-        return [
+        self,
+        user: User,
+        include_archived: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[ProjectResponse], int]:
+        rows, total = await self.repo.list_for_user(
+            user.id,
+            include_archived,
+            user.role == UserRole.ADMIN,
+            limit=limit,
+            offset=offset,
+        )
+        items = [
             self._project_response(
                 project,
                 membership.role if membership else ProjectMemberRole.OWNER,
@@ -45,6 +55,8 @@ class ProjectService:
             )
             for project, membership, member_count in rows
         ]
+        return items, total
+
 
     async def get(self, project_id: UUID, user: User) -> ProjectResponse:
         project, membership = await self._accessible(project_id, user)
@@ -82,12 +94,17 @@ class ProjectService:
         await self.repo.delete(project)
         await self.session.commit()
 
-    async def members(self, project_id: UUID, user: User) -> list[MemberResponse]:
+    async def members(
+        self, project_id: UUID, user: User, limit: int = 50, offset: int = 0
+    ) -> list[MemberResponse]:
         await self._accessible(project_id, user)
         return [
             self._member_response(member, member_user)
-            for member, member_user in await self.repo.list_members(project_id)
+            for member, member_user in await self.repo.list_members(
+                project_id, limit=limit, offset=offset
+            )
         ]
+
 
     async def add_member(self, project_id: UUID, data: MemberAdd, user: User) -> MemberResponse:
         _, membership = await self._accessible(project_id, user)

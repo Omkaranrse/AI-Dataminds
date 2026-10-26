@@ -1,5 +1,6 @@
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,8 +32,13 @@ class ProjectRepository:
         return result.scalar_one_or_none()
 
     async def list_for_user(
-        self, user_id: UUID, include_archived: bool, is_admin: bool
-    ) -> list[tuple[Project, ProjectMember | None, int]]:
+        self,
+        user_id: UUID,
+        include_archived: bool,
+        is_admin: bool,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[tuple[Project, ProjectMember | None, int]], int]:
         count_members = (
             select(func.count(ProjectMember.id))
             .where(ProjectMember.project_id == Project.id)
@@ -40,17 +46,29 @@ class ProjectRepository:
             .scalar_subquery()
         )
         if is_admin:
-            query = select(Project, func.null(), count_members)
+            items_query = select(Project, sa.null(), count_members)
+            count_query = select(func.count(Project.id))
         else:
-            query = (
+            items_query = (
                 select(Project, ProjectMember, count_members)
                 .join(ProjectMember, ProjectMember.project_id == Project.id)
                 .where(ProjectMember.user_id == user_id)
             )
+            count_query = (
+                select(func.count(Project.id))
+                .join(ProjectMember, ProjectMember.project_id == Project.id)
+                .where(ProjectMember.user_id == user_id)
+            )
+
         if not include_archived:
-            query = query.where(Project.archived_at.is_(None))
-        result = await self.session.execute(query.order_by(Project.updated_at.desc()))
-        return list(result.all())
+            items_query = items_query.where(Project.archived_at.is_(None))
+            count_query = count_query.where(Project.archived_at.is_(None))
+
+        total = int((await self.session.execute(count_query)).scalar_one())
+        result = await self.session.execute(
+            items_query.order_by(Project.updated_at.desc()).limit(limit).offset(offset)
+        )
+        return list(result.all()), total
 
     async def member_count(self, project_id: UUID) -> int:
         result = await self.session.execute(
@@ -58,14 +76,19 @@ class ProjectRepository:
         )
         return int(result.scalar_one())
 
-    async def list_members(self, project_id: UUID) -> list[tuple[ProjectMember, User]]:
+    async def list_members(
+        self, project_id: UUID, limit: int = 50, offset: int = 0
+    ) -> list[tuple[ProjectMember, User]]:
         result = await self.session.execute(
             select(ProjectMember, User)
             .join(User, User.id == ProjectMember.user_id)
             .where(ProjectMember.project_id == project_id)
             .order_by(ProjectMember.joined_at)
+            .limit(limit)
+            .offset(offset)
         )
         return list(result.all())
+
 
     async def user_by_email(self, email: str) -> User | None:
         result = await self.session.execute(select(User).where(User.email == email.lower()))
